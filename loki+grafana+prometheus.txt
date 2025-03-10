@@ -1,0 +1,258 @@
+to check yml identions ---   https://www.yamllint.com/
+https://www.youtube.com/watch?v=94JMdueq2SA - check this video for prometheus to grafana (CPU,RAM METRICS)
+https://www.youtube.com/watch?v=bIAC0uQee0k - check this video for loki to grafana specially 4.59 mintues to tranfer logs from loki grafana with promtail
+
+For LOKI will work on 4100:-
+
+--------------=============
+Download the config.yaml and promtail file inorder to configure and take logs from desired targets:-
+
+
+wget https://raw.githubusercontent.com/grafana/loki/main/cmd/loki/loki-local-config.yaml
+
+wget https://raw.githubusercontent.com/grafana/loki/main/clients/cmd/promtail/promtail-local-config.yaml
+
+Download the latest loki zip file :-
+
+
+wget https://github.com/grafana/loki/releases/download/v3.3.2/loki-linux-amd64.zip
+
+unzip loki-linux-amd64.zip
+
+chmod +x loki-linux-amd64 
+
+change the port number to 4100 from loki-local-config.yaml before running loki:-
+
+vim loki-local-config.yaml 
+
+Run Loki with Your Configuration:-
+
+
+./loki-linux-amd64 -config.file=loki-local-config.yaml  - this is will start loki.
+
+go to webbrowser http:(yourip:port)/metrics or /ready - you will be able see the loki logs:-
+
+
+Grafana Setup - will run on port 4200
+=======================================
+
+Add Grafana Repository:-
+
+sudo apt-get install -y software-properties-common wget apt-transport-https
+wget -q -O - https://packages.grafana.com/gpg.key | sudo apt-key add -
+echo "deb https://packages.grafana.com/oss/deb stable main" | sudo tee /etc/apt/sources.list.d/grafana.list
+sudo apt-get update
+sudo apt-get install grafana
+
+
+Step 2: Change Grafana Port to 4100 :-
+
+
+sudo vim /etc/grafana/grafana.ini
+
+Locate the [server] section in the file and change the http_port setting to 4100:-
+
+
+[server]
+http_port = 4200 -- just modify this portion
+
+
+restart grafana:-
+
+
+sudo systemctl daemon-reload
+sudo systemctl restart grafana-server
+sudo systemctl status grafana-server
+
+http://<your-server-ip>:4200 - for grafana
+
+{job="promtail"} |= `error` from grafana portal - if i want to check only error messages or any other particular log we can filter that
+
+Prometheus Setup == will run on port 9090
+==========================================
+Download the latest Prometheus release:- 
+
+wget https://github.com/prometheus/prometheus/releases/download/v2.47.0/prometheus-2.47.0.linux-amd64.tar.gz
+tar -xvf prometheus-2.47.0.linux-amd64.tar.gz
+
+move the binaries to /user/local/bin
+
+sudo mv prometheus-2.47.0.linux-amd64/prometheus /usr/local/bin/
+sudo mv prometheus-2.47.0.linux-amd64/promtool /usr/local/bin/
+
+
+Copy the default configuration and console files:-
+
+sudo cp prometheus-2.47.0.linux-amd64/prometheus.yml /etc/prometheus/
+sudo cp -r prometheus-2.47.0.linux-amd64/consoles /etc/prometheus/
+sudo cp -r prometheus-2.47.0.linux-amd64/console_libraries /etc/prometheus/
+
+create a promethus user:-
+
+sudo useradd --no-create-home --shell /bin/false prometheus
+
+Create a system service:- & paste mentioned configured till WantedBy=multi-user.target
+
+sudo vim /etc/systemd/system/prometheus.service
+
+
+[Unit]
+Description=Prometheus Monitoring
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=prometheus
+Group=prometheus
+Type=simple
+ExecStart=/usr/local/bin/prometheus \
+    --config.file=/etc/prometheus/prometheus.yml \
+    --storage.tsdb.path=/var/lib/prometheus/ \
+    --web.console.templates=/etc/prometheus/consoles \
+    --web.console.libraries=/etc/prometheus/console_libraries
+
+[Install]
+WantedBy=multi-user.target
+
+Reload systemd to apply the new service:-
+
+sudo systemctl daemon-reload
+sudo systemctl start prometheus
+sudo systemctl enable prometheus
+sudo systemctl status prometheus
+
+
+http://<your-server-ip>:9090
+
+
+
+
+Take System Logs (var logs from desired machine with promtail) Configuration of promtail:
+--------------------------------------------------------------------------------------------
+Donwload latest binary:-
+
+wget https://github.com/grafana/loki/releases/download/v3.3.2/promtail-linux-amd64.zip
+unzip promtail-linux-amd64.zip
+mv promtail-linux-amd64 promtail
+chmod +x promtail
+
+
+sudo mv promtail /usr/local/bin/promtail
+
+Create a promtail-config.yaml in /etc:-
+
+sudo vim /etc/promtail-config.yaml
+# this configuration will provide the infomration of syslog that we have under /var/log and 
+server:
+  http_listen_port: 9081
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml --- what is this need to figure this out
+
+clients:
+  - url: http://localhost:4100/loki/api/v1/push
+
+scrape_configs:
+- job_name: system
+  static_configs:
+    - targets:
+        - localhost
+      labels:
+        job: syslog
+        __path__: /var/log/syslog
+        stream: stdout
+
+
+# 🔍 Scrape promtail.service logs using systemd journal
+- job_name: promtail_service_logs
+  journal:
+    path: /var/log/journal  # Path to systemd journal logs
+    labels:
+      job: promtail
+  relabel_configs:
+    - source_labels: ['__journal__systemd_unit']
+      regex: 'promtail.service'
+      action: keep
+
+create group for promtail and give permission to /tmp/positions.yaml:-
+===================================================================
+groupadd promtail
+sudo chown promtail:promtail /tmp/positions.yaml
+
+
+Restart Promtail:-
+===================
+systemctl restart promtail
+
+Create a service /etc/systemd/system/promtail.service:-
+----------------------------------------------------
+vim promtail.service from /etc/systemd/system
+
+[Unit]
+Description=Promtail service
+After=network.target
+
+[Service]
+User=root
+ExecStart=/usr/local/bin/promtail -config.file=/etc/promtail-config.yaml
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+
+Restart the Services:
+----------------------
+Run Promtail on desired machine:- to get logs and services
+-------------------------------------------------------------
+promtail -config.file=/etc/promtail-config.yaml
+
+promtail -client.url http://192.168.1.227:4100/loki/api/v1/push -config.file=/etc/promtail-config.yaml :- this will provide the information to prometheus server
+
+for metrics cpu,ram etc:-
+=============================
+wget https://github.com/prometheus/node_exporter/releases/download/v1.6.0/node_exporter-1.6.0.linux-amd64.tar.gz
+
+tar xvf node_exporter-1.6.0.linux-amd64.tar.gz
+
+cd node_exporter-1.6.0.linux-amd64
+
+./node_exporter --- make sure you run this from cd node_exporter-1.6.0.linux-amd64 everytime your instance is rebooted otherwise you will not get the data on grafana
+
+create a prometheus.yaml file on prometheus server 192.168.1.227 :- where we have to add the below configuration to get the cpu and ram matrics.
+
+vim prometheus.yaml :- dump all the configuration
+
+global:
+  scrape_interval: 15s       # Scrape interval set to every 15 seconds
+  evaluation_interval: 15s     # Evaluation interval set to every 15 seconds
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []        # No Alertmanager targets defined
+
+# If you don't have any rule files, define rule_files as an empty list:
+rule_files: []
+
+# for to add two different hosts and to get cpu and ram meterics.
+scrape_configs:
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"] # this for prometheus where it is running
+
+  - job_name: "node_exporter_192.168.1.227"
+    static_configs:
+      - targets: ["192.168.1.227:9100"] # this for nodes which are being directed to prometheus
+
+  - job_name: "node_exporter_192.168.1.246"
+    static_configs:
+      - targets: ["192.168.1.246:9100"]
+
+
+then http://192.168.1.246:9100, or http://192.168.1.227:9100
+
+
+to import metrics on grafana we can use import dashboard 1860 
+to import logs on grafana we can use import dashboard 13639 
+
