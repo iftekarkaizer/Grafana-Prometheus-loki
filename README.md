@@ -1,10 +1,12 @@
 Summary of What Has Been Done
+
 Loki Setup (Port 4100)
 
-Downloaded Loki configuration files (loki-local-config.yaml).
+Configured loki (loki-local-config.yaml).
 Installed and configured Loki to collect logs.
 Changed the port to 4100 before running Loki.
 Verified logs through the browser at http://<your-server-ip>:4100/metrics.
+
 Grafana Setup (Port 4200)
 
 Installed Grafana from the official repository.
